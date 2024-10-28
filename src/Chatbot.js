@@ -1,37 +1,152 @@
-import React, { useState } from 'react';
-import './Chatbot.css';  // We'll add basic CSS for styling later.
+import React, { useState, useEffect, useRef } from 'react';
+import './Chatbot.css';
 
 const Chatbot = () => {
-  const [messages, setMessages] = useState([]);  // Store chat messages
-  const [userInput, setUserInput] = useState('');  // Store user input
+  const [messages, setMessages] = useState([]);
+  const [userInput, setUserInput] = useState('');
+  const [loading, setLoading] = useState(false);
+  const videoRef = useRef(null);
+  const [isRecording, setIsRecording] = useState(false);
+  const [frameCount, setFrameCount] = useState(0);
+  const [isPlaying, setIsPlaying] = useState(false); // Control playback
+  const [currentFrameIndex, setCurrentFrameIndex] = useState(0);  // Track playback frame index
+  const [playbackFrame, setPlaybackFrame] = useState(null);  // Current frame for playback
 
-  // Handle form submission
-  const handleSubmit = (e) => {
+  useEffect(() => {
+    const initializeWebRTC = async () => {
+      try {
+        const stream = await navigator.mediaDevices.getUserMedia({ video: true, audio: false });
+        if (videoRef.current) {
+          videoRef.current.srcObject = stream;
+        }
+      } catch (error) {
+        console.error('Error accessing webcam:', error);
+      }
+    };
+    initializeWebRTC();
+  }, []);
+
+  // Function to capture frames from the video feed
+  useEffect(() => {
+    const captureFrame = async () => {
+      if (videoRef.current && frameCount < 60) {
+        const canvas = document.createElement('canvas');
+        canvas.width = videoRef.current.videoWidth;
+        canvas.height = videoRef.current.videoHeight;
+        const ctx = canvas.getContext('2d');
+        ctx.drawImage(videoRef.current, 0, 0, canvas.width, canvas.height);
+
+        const base64Image = canvas.toDataURL('image/jpeg').split(',')[1];
+
+        try {
+          await fetch('http://localhost:5000/save_frame', {
+            method: 'POST',
+            headers: { 'Content-Type': 'application/json' },
+            body: JSON.stringify({ frame: base64Image, frameNumber: frameCount }),
+          });
+
+          setFrameCount((prevCount) => prevCount + 1);
+        } catch (error) {
+          console.error('Error sending frame to backend:', error);
+        }
+      } else if (frameCount >= 60) {
+        setIsRecording(false); // Stop recording after 60 frames
+      }
+    };
+
+    if (isRecording) {
+      const interval = setInterval(captureFrame, 100);
+      return () => clearInterval(interval);
+    }
+  }, [isRecording, frameCount]);
+
+  const toggleRecording = () => {
+    setIsRecording(!isRecording);
+    if (!isRecording) {
+      setFrameCount(0); // Reset frame count for new recording session
+    }
+  };
+
+  // Playback frames from the backend frames folder
+  useEffect(() => {
+    const playbackFrames = async () => {
+      try {
+        const response = await fetch(`http://localhost:5000/frames/frame_${currentFrameIndex}.jpg`);
+        if (response.ok) {
+          setPlaybackFrame(`http://localhost:5000/frames/frame_${currentFrameIndex}.jpg`);
+          setCurrentFrameIndex((prevIndex) => prevIndex + 1);
+        } else {
+          setCurrentFrameIndex(0); // Reset playback loop if the frame is not found
+          setIsPlaying(false); // Stop playback if no more frames are available
+        }
+      } catch (error) {
+        console.error('Error fetching playback frame:', error);
+      }
+    };
+
+    if (isPlaying) {
+      const interval = setInterval(playbackFrames, 100);
+      return () => clearInterval(interval);
+    }
+  }, [isPlaying, currentFrameIndex]);
+
+  const togglePlayback = () => {
+    setIsPlaying(!isPlaying);
+    if (!isPlaying) {
+      setCurrentFrameIndex(0); // Reset frame index for playback
+    }
+  };
+
+  const handleSubmit = async (e) => {
     e.preventDefault();
-    
     if (userInput.trim() === '') return;
 
-    // Add user message to chat
     const newMessages = [...messages, { sender: 'user', text: userInput }];
-
-    // Add a placeholder for bot response (this will be updated later when we integrate LLM)
     newMessages.push({ sender: 'bot', text: 'Thinking...' });
-
     setMessages(newMessages);
-    setUserInput('');  // Clear input field
+    setUserInput('');
+    setLoading(true);
 
-    // Simulate bot response after 1 second (will be replaced with LLM later)
-    setTimeout(() => {
-      setMessages(prevMessages => 
-        prevMessages.map((msg, idx) => 
-          idx === prevMessages.length - 1 ? { ...msg, text: 'Hello! How can I help you?' } : msg
+    try {
+      const response = await fetch('http://localhost:5000/chat', {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({ message: userInput }),
+      });
+      const data = await response.json();
+      setMessages(prevMessages =>
+        prevMessages.map((msg, idx) =>
+          idx === prevMessages.length - 1 ? { ...msg, text: data.response } : msg
         )
       );
-    }, 1000);
+    } catch (error) {
+      console.error('Error fetching chatbot response:', error);
+      setMessages(prevMessages =>
+        prevMessages.map((msg, idx) =>
+          idx === prevMessages.length - 1 ? { ...msg, text: 'Error: Could not fetch response.' } : msg
+        )
+      );
+    } finally {
+      setLoading(false);
+    }
   };
 
   return (
     <div className="chatbot">
+      <div className="video-row">
+        <div className="video-container">
+          <video ref={videoRef} autoPlay playsInline muted className="video-stream" />
+        </div>
+        <div className="video-container">
+          {playbackFrame && <img src={playbackFrame} alt="Playback Frame" className="video-stream" />}
+        </div>
+      </div>
+
+      <div className="button-container">
+        <button onClick={toggleRecording}>{isRecording ? 'Stop Recording' : 'Record'}</button>
+        <button onClick={togglePlayback}>{isPlaying ? 'Stop Playback' : 'Play'}</button>
+      </div>
+
       <div className="chat-window">
         <div className="messages">
           {messages.map((message, index) => (
@@ -40,17 +155,18 @@ const Chatbot = () => {
             </div>
           ))}
         </div>
-      </div>
 
-      <form onSubmit={handleSubmit} className="input-form">
-        <input 
-          type="text"
-          value={userInput}
-          onChange={(e) => setUserInput(e.target.value)}
-          placeholder="Type your question..."
-        />
-        <button type="submit">Send</button>
-      </form>
+        <form onSubmit={handleSubmit} className="input-form">
+          <input
+            type="text"
+            value={userInput}
+            onChange={(e) => setUserInput(e.target.value)}
+            placeholder="Type your question..."
+            disabled={loading}
+          />
+          <button type="submit" disabled={loading}>Send</button>
+        </form>
+      </div>
     </div>
   );
 };
