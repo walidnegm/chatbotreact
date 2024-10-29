@@ -90,3 +90,46 @@
 .input-form button:hover {
   background-color: #0073e6;
 }
+
+/* Button Container */
+.button-container {
+  display: flex;
+  gap: 10px; /* Space between buttons */
+  padding: 10px;
+  background-color: #f9f9f9;
+}
+
+.button-container button {
+  padding: 10px 15px;
+  background-color: #0084ff;
+  color: white;
+  border: none;
+  border-radius: 10px;
+  cursor: pointer;
+}
+
+.button-container button:hover {
+  background-color: #0073e6;
+}
+
+/* Transcript Window Styling */
+.transcript-window {
+  margin: 20px 0;
+  padding: 15px;
+  background-color: #f9f9f9;
+  border: 1px solid #ddd;
+  border-radius: 10px;
+  max-width: 600px;
+}
+
+.transcript-window h3 {
+  margin: 0;
+  font-size: 1.2em;
+  color: #333;
+}
+
+.transcript-window p {
+  color: #555;
+  font-style: italic;
+  white-space: pre-wrap; /* Keeps the formatting of the transcript */
+}

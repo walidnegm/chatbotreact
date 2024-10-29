@@ -6,14 +6,19 @@ const Chatbot = () => {
   const [userInput, setUserInput] = useState('');
   const [loading, setLoading] = useState(false);
   const videoRef = useRef(null);
-  const [isRecording, setIsRecording] = useState(false);
+  const [isFrameRecording, setIsFrameRecording] = useState(false);
+  const [isWhisperRecording, setIsWhisperRecording] = useState(false);
+  const [transcript, setTranscript] = useState('');
+  const [whisperLoading, setWhisperLoading] = useState(false); // Loading indicator for Whisper
+  const mediaRecorderRef = useRef(null);
+  const recordedChunks = useRef([]);
+
   const [frameCount, setFrameCount] = useState(0);
   const [isPlaying, setIsPlaying] = useState(false);
   const [currentFrameIndex, setCurrentFrameIndex] = useState(0);
   const [playbackFrame, setPlaybackFrame] = useState(null);
 
   useEffect(() => {
-    // Initialize WebRTC video and audio stream
     const initializeWebRTC = async () => {
       try {
         const stream = await navigator.mediaDevices.getUserMedia({ video: true, audio: true });
@@ -27,7 +32,16 @@ const Chatbot = () => {
     initializeWebRTC();
   }, []);
 
-  // Capture frames from the video feed
+  // Frame Recording Functions
+  const startFrameRecording = () => {
+    setIsFrameRecording(true);
+    setFrameCount(0); // Reset frame count for new recording session
+  };
+
+  const stopFrameRecording = () => {
+    setIsFrameRecording(false);
+  };
+
   useEffect(() => {
     const captureFrame = async () => {
       if (videoRef.current && frameCount < 60) {
@@ -49,20 +63,55 @@ const Chatbot = () => {
           console.error('Error sending frame to backend:', error);
         }
       } else if (frameCount >= 60) {
-        setIsRecording(false);
+        stopFrameRecording(); // Stop frame recording after 60 frames
       }
     };
 
-    if (isRecording) {
+    if (isFrameRecording) {
       const interval = setInterval(captureFrame, 100);
       return () => clearInterval(interval);
     }
-  }, [isRecording, frameCount]);
+  }, [isFrameRecording, frameCount]);
 
-  const toggleRecording = () => {
-    setIsRecording(!isRecording);
-    if (!isRecording) {
-      setFrameCount(0);
+  // Whisper Recording Functions
+  const startWhisperRecording = () => {
+    navigator.mediaDevices.getUserMedia({ audio: true })
+      .then(stream => {
+        mediaRecorderRef.current = new MediaRecorder(stream);
+        mediaRecorderRef.current.ondataavailable = event => {
+          if (event.data.size > 0) recordedChunks.current.push(event.data);
+        };
+        mediaRecorderRef.current.onstop = sendAudioForTranscription;
+        mediaRecorderRef.current.start();
+        setIsWhisperRecording(true);
+      })
+      .catch(error => console.error('Error accessing microphone:', error));
+  };
+
+  const stopWhisperRecording = () => {
+    mediaRecorderRef.current.stop();
+    setIsWhisperRecording(false);
+  };
+
+  const sendAudioForTranscription = async () => {
+    const audioBlob = new Blob(recordedChunks.current, { type: 'audio/webm' });
+    recordedChunks.current = [];
+    setWhisperLoading(true);  // Start loading indicator
+
+    const formData = new FormData();
+    formData.append('audio', audioBlob, 'audio.webm');
+
+    try {
+      const response = await fetch('http://localhost:5000/transcribe', {
+        method: 'POST',
+        body: formData,
+      });
+      const data = await response.json();
+      setTranscript(data.transcript); // Set the transcription in the state
+    } catch (error) {
+      console.error('Error sending audio for transcription:', error);
+    } finally {
+      setWhisperLoading(false);  // End loading indicator
     }
   };
 
@@ -142,8 +191,15 @@ const Chatbot = () => {
       </div>
 
       <div className="button-container">
-        <button onClick={toggleRecording}>{isRecording ? 'Stop Recording' : 'Record'}</button>
-        <button onClick={togglePlayback}>{isPlaying ? 'Stop Playback' : 'Play'}</button>
+        <button onClick={isFrameRecording ? stopFrameRecording : startFrameRecording}>
+          {isFrameRecording ? 'Stop Frame Recording' : 'Start Frame Recording'}
+        </button>
+        <button onClick={isPlaying ? togglePlayback  : togglePlayback}>
+          {isPlaying ? 'Stop Playback' : 'Play'}
+        </button>
+        <button onClick={isWhisperRecording ? stopWhisperRecording : startWhisperRecording}>
+          {isWhisperRecording ? 'Stop Whisper Recording' : 'Start Whisper Recording'}
+        </button>
       </div>
 
       <div className="chat-window">
@@ -164,6 +220,11 @@ const Chatbot = () => {
           />
           <button type="submit" disabled={loading}>Send</button>
         </form>
+      </div>
+
+      <div className="transcript-window">
+        <h3>Transcript from Whisper:</h3>
+        {whisperLoading ? <p>Processing transcription...</p> : <p>{transcript || "No transcription available"}</p>}
       </div>
     </div>
   );
