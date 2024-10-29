@@ -13,15 +13,15 @@ const Chatbot = () => {
   const [playbackFrame, setPlaybackFrame] = useState(null);
 
   useEffect(() => {
-    // Initialize WebRTC video stream
+    // Initialize WebRTC video and audio stream
     const initializeWebRTC = async () => {
       try {
-        const stream = await navigator.mediaDevices.getUserMedia({ video: true, audio: false });
+        const stream = await navigator.mediaDevices.getUserMedia({ video: true, audio: true });
         if (videoRef.current) {
           videoRef.current.srcObject = stream;
         }
       } catch (error) {
-        console.error('Error accessing webcam:', error);
+        console.error('Error accessing webcam and microphone:', error);
       }
     };
     initializeWebRTC();
