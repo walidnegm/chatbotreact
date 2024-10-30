@@ -18,6 +18,28 @@ const Chatbot = () => {
   const [currentFrameIndex, setCurrentFrameIndex] = useState(0);
   const [playbackFrame, setPlaybackFrame] = useState(null);
 
+
+ // New state to store LLM result
+ const [llmResponse, setLlmResponse] = useState(null);
+
+ const sendTranscriptionToLLM = async () => {
+  setLoading(true);
+  try {
+    const response = await fetch('http://localhost:8000/process_llm', {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify({ transcription_text: transcript })  // Send transcript as JSON, not a file
+    });
+    const data = await response.json();
+    setLlmResponse(data.response);
+    setMessages(prevMessages => [...prevMessages, { sender: 'bot', text: data.response }]);
+  } catch (error) {
+    console.error("Error fetching LLM response:", error);
+  } finally {
+    setLoading(false);
+  }
+};  // <-- missing closing bracket added here
+
   useEffect(() => {
     const initializeWebRTC = async () => {
       try {
@@ -108,6 +130,8 @@ const Chatbot = () => {
       });
       const data = await response.json();
       setTranscript(data.transcript); // Set the transcription in the state
+      sendTranscriptionToLLM(); // Invoke LLM after receiving transcription
+
     } catch (error) {
       console.error('Error sending audio for transcription:', error);
     } finally {
