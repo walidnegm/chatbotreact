@@ -25,11 +25,18 @@ const Chatbot = () => {
  const sendTranscriptionToLLM = async () => {
   setLoading(true);
   try {
+    console.log("Sending transcription to backend...");
+
     const response = await fetch('http://localhost:8000/process_llm', {
       method: 'POST',
       headers: { 'Content-Type': 'application/json' },
       body: JSON.stringify({ transcription_text: transcript })  // Send transcript as JSON, not a file
     });
+
+    if (!response.ok) {
+      throw new Error(`HTTP error! status: ${response.status}`);
+    }
+    
     const data = await response.json();
     setLlmResponse(data.response);
     setMessages(prevMessages => [...prevMessages, { sender: 'bot', text: data.response }]);
