@@ -36,7 +36,7 @@ const Chatbot = () => {
     if (!response.ok) {
       throw new Error(`HTTP error! status: ${response.status}`);
     }
-    
+
     const data = await response.json();
     setLlmResponse(data.response);
     setMessages(prevMessages => [...prevMessages, { sender: 'bot', text: data.response }]);
@@ -179,19 +179,26 @@ const Chatbot = () => {
   const handleSubmit = async (e) => {
     e.preventDefault();
     if (userInput.trim() === '') return;
-
+  
+    // Add the user's input to the messages
     const newMessages = [...messages, { sender: 'user', text: userInput }];
     newMessages.push({ sender: 'bot', text: 'Thinking...' });
     setMessages(newMessages);
     setUserInput('');
     setLoading(true);
-
+  
     try {
-      const response = await fetch('http://localhost:5000/chat', {
+      // Send the user input to the FastAPI LLM service
+      const response = await fetch('http://localhost:8000/process_llm', {
         method: 'POST',
         headers: { 'Content-Type': 'application/json' },
-        body: JSON.stringify({ message: userInput }),
+        body: JSON.stringify({ transcription_text: userInput })  // Sending the user input
       });
+  
+      if (!response.ok) {
+        throw new Error(`HTTP error! status: ${response.status}`);
+      }
+  
       const data = await response.json();
       setMessages((prevMessages) =>
         prevMessages.map((msg, idx) =>
@@ -199,7 +206,7 @@ const Chatbot = () => {
         )
       );
     } catch (error) {
-      console.error('Error fetching chatbot response:', error);
+      console.error('Error fetching LLM response:', error);
       setMessages((prevMessages) =>
         prevMessages.map((msg, idx) =>
           idx === prevMessages.length - 1 ? { ...msg, text: 'Error: Could not fetch response.' } : msg
