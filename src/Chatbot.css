@@ -1,7 +1,7 @@
 .chatbot {
   display: flex;
   flex-direction: column;
-  max-width: 600px;
+  max-width: 800px;
   margin: 50px auto;
   font-family: Arial, sans-serif;
   border: 1px solid #ccc;
@@ -9,21 +9,36 @@
   overflow: hidden;
 }
 
-/* Container for Both Video Elements Side by Side */
-.video-row {
+/* Updated Media Row */
+.media-row {
   display: flex;
-  gap: 15px; /* Space between video containers */
+  gap: 20px; /* Adjusted space between the video and image containers */
   padding: 10px;
   background-color: #f0f0f0; /* Optional background color for contrast */
 }
 
 .video-container {
-  flex: 1; /* Allow both video containers to take equal width */
-  background-color: #000;
+  flex: 1; /* Allow the video container to take up half of the available space */
+  background-color: #000; /* Black background for the video container */
+}
+
+.image-container {
+  flex: 1; /* Allow the image container to take up half of the available space */
+  display: flex;
+  justify-content: center; /* Center the image horizontally */
+  align-items: center; /* Center the image vertically */
+  background-color: #fff; /* White background for contrast */
 }
 
 .video-stream {
   width: 100%;
+  height: auto;
+  border-radius: 8px;
+  border: 1px solid #ccc;
+}
+
+.image-display {
+  max-width: 100%; /* Make sure the image fits within the container */
   height: auto;
   border-radius: 8px;
   border: 1px solid #ccc;
@@ -112,6 +127,19 @@
   background-color: #0073e6;
 }
 
+/* Agent Questions Section */
+.agent-questions {
+  padding: 10px;
+  background-color: #f9f9f9;
+  border-top: 1px solid #ddd;
+}
+
+.agent-questions h3 {
+  margin: 0;
+  font-size: 1.2em;
+  color: #333;
+}
+
 /* Transcript Window Styling */
 .transcript-window {
   margin: 20px 0;
@@ -119,7 +147,7 @@
   background-color: #f9f9f9;
   border: 1px solid #ddd;
   border-radius: 10px;
-  max-width: 600px;
+  max-width: 800px;
 }
 
 .transcript-window h3 {
