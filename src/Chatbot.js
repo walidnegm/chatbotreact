@@ -1,155 +1,201 @@
-import React, { useState, useEffect, useRef } from 'react';
+import React, { useState, useEffect, useRef, useCallback } from 'react';
+import { debounce } from 'lodash';
 import './Chatbot.css';
+
+const API_ENDPOINTS = {
+  LLM: process.env.REACT_APP_LLM_ENDPOINT || 'http://localhost:8000',
+  WHISPER: process.env.REACT_APP_WHISPER_ENDPOINT || 'http://localhost:5000',
+  QUESTIONS: process.env.REACT_APP_QUESTIONS_ENDPOINT || 'http://localhost:8001'
+};
+
+const WAKE_WORD = 'hey bot';
+const MAX_AUDIO_CHUNK_SIZE = 1024 * 1024 * 5; // 5MB
 
 const Chatbot = () => {
   const [messages, setMessages] = useState([]);
   const [userInput, setUserInput] = useState('');
   const [loading, setLoading] = useState(false);
-  const videoRef = useRef(null);
-  const [isFrameRecording, setIsFrameRecording] = useState(false);
+  const [error, setError] = useState(null);
   const [transcript, setTranscript] = useState('');
   const [whisperLoading, setWhisperLoading] = useState(false);
-  const mediaRecorderRef = useRef(null);
-  const recordedChunks = useRef([]);
-
-  const [listening, setListening] = useState(false); // To indicate if the system is listening
-  const [wakeupDetected, setWakeupDetected] = useState(false); // To indicate if the wake-up word is detected
-
-  const [frameCount, setFrameCount] = useState(0);
-  const [isPlaying, setIsPlaying] = useState(false);
-  const [currentFrameIndex, setCurrentFrameIndex] = useState(0);
-  const [playbackFrame, setPlaybackFrame] = useState(null);
-
   const [currentQuestionIndex, setCurrentQuestionIndex] = useState(0);
-  const [currentQuestion, setCurrentQuestion] = useState('');
+  const [listeningPrompt, setListeningPrompt] = useState('Waiting for wake word...');
+  const [isActivelyListening, setIsActivelyListening] = useState(false);
+  const [mediaPermissions, setMediaPermissions] = useState({ audio: false, video: false });
 
-  // Function to fetch the next question from the backend
-  const fetchNextQuestion = async () => {
-    try {
-      const response = await fetch(`http://localhost:8001/get_question/${currentQuestionIndex}`);
-      if (!response.ok) {
-        throw new Error(`Error fetching question: ${response.statusText}`);
+  const videoRef = useRef(null);
+  const recordedChunks = useRef([]);
+  const mediaRecorderRef = useRef(null);
+  const streamRef = useRef(null);
+  const recognitionRef = useRef(null);
+
+  // Initialize wake word detection
+  useEffect(() => {
+    initializeWakeWordDetection();
+    return () => {
+      if (recognitionRef.current) {
+        recognitionRef.current.stop();
       }
-      const data = await response.json();
-      setCurrentQuestion(data.question);
-      setCurrentQuestionIndex(prevIndex => prevIndex + 1);
-      utterQuestion(data.question); // Use Google Text-to-Speech to speak the question
-    } catch (error) {
-      console.error("Error fetching next question:", error);
+    };
+  }, []);
+
+  const initializeWakeWordDetection = () => {
+    // Check if browser supports SpeechRecognition
+    const SpeechRecognition = window.SpeechRecognition || window.webkitSpeechRecognition;
+    if (!SpeechRecognition) {
+      setError("Your browser doesn't support speech recognition. Please use Chrome.");
+      return;
     }
+
+    recognitionRef.current = new SpeechRecognition();
+    recognitionRef.current.continuous = true;
+    recognitionRef.current.interimResults = true;
+    recognitionRef.current.lang = 'en-US';
+
+    recognitionRef.current.onstart = () => {
+      setListeningPrompt('Waiting for wake word...');
+    };
+
+    recognitionRef.current.onresult = (event) => {
+      for (let i = event.resultIndex; i < event.results.length; i++) {
+        const transcript = event.results[i][0].transcript.trim().toLowerCase();
+        
+        // Check for wake word
+        if (transcript.includes(WAKE_WORD)) {
+          handleWakeWordDetected();
+        }
+        
+        // If actively listening (after wake word), process the speech
+        if (isActivelyListening && event.results[i].isFinal) {
+          processActiveSpeech(transcript);
+        }
+      }
+    };
+
+    recognitionRef.current.onerror = (event) => {
+      console.error('Speech recognition error:', event.error);
+      // Restart recognition if it stops
+      if (event.error !== 'no-speech') {
+        recognitionRef.current.stop();
+        setTimeout(() => recognitionRef.current.start(), 500);
+      }
+    };
+
+    recognitionRef.current.onend = () => {
+      // Restart recognition if it stops
+      recognitionRef.current.start();
+    };
+
+    // Start the recognition
+    recognitionRef.current.start();
   };
 
-  // Function to play the current question using Google Text-to-Speech
-  const utterQuestion = (question) => {
-    const utterance = new SpeechSynthesisUtterance(question);
-    window.speechSynthesis.speak(utterance);
+  const handleWakeWordDetected = () => {
+    setIsActivelyListening(true);
+    setListeningPrompt('Wake word detected! Listening for command...');
+    
+    // Stop active listening after 10 seconds of no speech
+    setTimeout(() => {
+      if (isActivelyListening) {
+        setIsActivelyListening(false);
+        setListeningPrompt('Waiting for wake word...');
+      }
+    }, 2000);
   };
 
-  // Function to send transcription to the LLM
+  const processActiveSpeech = async (transcript) => {
+    if (!transcript || transcript === WAKE_WORD) return;
+    
+    setTranscript(transcript);
+    setIsActivelyListening(false);
+    setListeningPrompt('Waiting for wake word...');
+    
+    // Process the command with your LLM
+    await sendTranscriptionToLLM(transcript);
+  };
+
+  // Initialize video stream
+  useEffect(() => {
+    const initializeMedia = async () => {
+      try {
+        const stream = await navigator.mediaDevices.getUserMedia({ 
+          video: true, 
+          audio: true 
+        });
+        
+        streamRef.current = stream;
+        if (videoRef.current) {
+          videoRef.current.srcObject = stream;
+        }
+        
+        setMediaPermissions({ audio: true, video: true });
+      } catch (error) {
+        console.error('Error accessing media devices:', error);
+        setError(`Media access error: ${error.message}`);
+        setMediaPermissions({ audio: false, video: false });
+      }
+    };
+
+    initializeMedia();
+
+    return () => {
+      if (streamRef.current) {
+        streamRef.current.getTracks().forEach(track => track.stop());
+      }
+    };
+  }, []);
+
+  // Your existing API call functions
   const sendTranscriptionToLLM = async (text) => {
     setLoading(true);
     try {
-      console.log("Sending transcription to backend...");
-
-      const response = await fetch('http://localhost:8000/process_llm', {
+      const response = await fetch(`${API_ENDPOINTS.LLM}/process_llm`, {
         method: 'POST',
         headers: { 'Content-Type': 'application/json' },
-        body: JSON.stringify({ transcription_text: text })  // Use the provided text
+        body: JSON.stringify({ transcription_text: text })
       });
 
-      if (!response.ok) {
-        throw new Error(`HTTP error! status: ${response.status}`);
-      }
-
+      if (!response.ok) throw new Error(`HTTP error! status: ${response.status}`);
       const data = await response.json();
-      setMessages((prevMessages) => [
+
+      setMessages(prevMessages => [
         ...prevMessages,
+        { sender: 'user', text: text },
         { sender: 'bot', text: data.response }
       ]);
 
-      // Utter the response from the LLM
-      utterQuestion(data.response); // Speak the LLM's response
-
+      // Speak the response
+      utterResponse(data.response);
     } catch (error) {
-      console.error("Error fetching LLM response:", error);
+      console.error("Error:", error);
+      setError(`Failed to get response: ${error.message}`);
     } finally {
       setLoading(false);
     }
   };
 
-  // Initialize WebRTC
-  useEffect(() => {
-    const initializeWebRTC = async () => {
-      try {
-        const stream = await navigator.mediaDevices.getUserMedia({ video: true, audio: true });
-        if (videoRef.current) {
-          videoRef.current.srcObject = stream;
-          startListening(stream); // Start listening for the wake-up word
-        }
-      } catch (error) {
-        console.error('Error accessing webcam and microphone:', error);
-      }
-    };
-    initializeWebRTC();
-  }, []);
-
-  // Function to start listening for wake-up word
-  const startListening = (stream) => {
-    const audioContext = new (window.AudioContext || window.webkitAudioContext)();
-    const input = audioContext.createMediaStreamSource(stream);
-    const recorder = new MediaRecorder(stream);
-
-    recorder.ondataavailable = async (event) => {
-      if (event.data.size > 0) {
-        const formData = new FormData();
-        formData.append('audio', event.data, 'audio.webm');
-
-        try {
-          const response = await fetch('http://localhost:5000/transcribe', {
-            method: 'POST',
-            body: formData,
-          });
-          const data = await response.json();
-
-          // Check for the wake-up word in the transcription
-          if (data.transcript && data.transcript.includes("bot")) {
-            setWakeupDetected(true);
-            console.log("Wake-up word 'bot' detected!");
-            handleWakeWordDetected(); // Handle the wake-up word action
-          }
-        } catch (error) {
-          console.error('Error sending audio for transcription:', error);
-        }
-      }
-    };
-
-    recorder.start();
-    setListening(true); // Set listening state
-  };
-
-  // Function to handle wake word detection
-  const handleWakeWordDetected = () => {
-    // Handle the logic when the wake-up word is detected
-    // For example, start recording the next commands or respond visually
-    console.log("Listening for commands...");
-    setListening(false); // Stop the listening prompt
-  };
-
+  // Add this function inside the Chatbot component, before the return statement
   const handleSubmit = async (e) => {
     e.preventDefault();
-    if (userInput.trim() === '') return;
+    const trimmedInput = userInput.trim();
+    if (trimmedInput === '') return;
 
-    const newMessages = [...messages, { sender: 'user', text: userInput }];
-    newMessages.push({ sender: 'bot', text: 'Thinking...' });
-    setMessages(newMessages);
+    // Clear input and set loading state
     setUserInput('');
     setLoading(true);
 
+    // Update messages immediately for better UX
+    setMessages(prevMessages => [
+      ...prevMessages,
+      { sender: 'user', text: trimmedInput },
+      { sender: 'bot', text: 'Thinking...' }
+    ]);
+
     try {
-      const response = await fetch('http://localhost:8000/process_llm', {
+      const response = await fetch(`${API_ENDPOINTS.LLM}/process_llm`, {
         method: 'POST',
         headers: { 'Content-Type': 'application/json' },
-        body: JSON.stringify({ transcription_text: userInput })
+        body: JSON.stringify({ transcription_text: trimmedInput })
       });
 
       if (!response.ok) {
@@ -157,45 +203,94 @@ const Chatbot = () => {
       }
 
       const data = await response.json();
-      setMessages((prevMessages) =>
+
+      // Update the "Thinking..." message with the actual response
+      setMessages(prevMessages =>
         prevMessages.map((msg, idx) =>
-          idx === prevMessages.length - 1 ? { ...msg, text: data.response } : msg
+          idx === prevMessages.length - 1 
+            ? { ...msg, text: data.response }
+            : msg
         )
       );
+
+      // Optionally speak the response
+      utterResponse(data.response);
+
     } catch (error) {
       console.error('Error fetching LLM response:', error);
-      setMessages((prevMessages) =>
+      setError(`Failed to get response: ${error.message}`);
+      
+      // Update the "Thinking..." message with error
+      setMessages(prevMessages =>
         prevMessages.map((msg, idx) =>
-          idx === prevMessages.length - 1 ? { ...msg, text: 'Error: Could not fetch response.' } : msg
+          idx === prevMessages.length - 1 
+            ? { ...msg, text: 'Error: Could not fetch response.' }
+            : msg
         )
       );
     } finally {
       setLoading(false);
     }
   };
+  const utterResponse = (text) => {
+    if ('speechSynthesis' in window) {
+      const utterance = new SpeechSynthesisUtterance(text);
+      window.speechSynthesis.speak(utterance);
+    }
+  };
+
+  // Rest of your component code (handleSubmit, fetchNextQuestion, etc.)
+  // ... 
 
   return (
-    <div className="chatbot">
+    <div className="chatbot" role="main" aria-label="Chatbot Interface">
       <div className="media-row">
         <div className="video-container">
-          <video ref={videoRef} autoPlay playsInline muted className="video-stream" />
+          <video 
+            ref={videoRef} 
+            autoPlay 
+            playsInline 
+            muted 
+            className="video-stream"
+            aria-label="Video feed"
+          />
         </div>
         <div className="image-container">
-          <img src="/lucky_bot0.png" alt="Interview Agent" className="image-display" />
+          <img 
+            src="/lucky_bot0.png" 
+            alt="Interview Agent Avatar" 
+            className="image-display"
+          />
         </div>
       </div>
-      <div className="listening-indicator">
-        {listening ? <p>Listening...</p> : null}
-        {wakeupDetected ? <p>Wake-up word detected!</p> : null}
+
+      {error && (
+        <div className="error-message" role="alert">
+          {error}
+        </div>
+      )}
+
+      <div 
+        className="listening-indicator" 
+        role="status" 
+        aria-live="polite"
+      >
+        {listeningPrompt}
       </div>
+
       <div className="chat-window">
         <div className="messages">
           {messages.map((message, index) => (
-            <div key={index} className={`message ${message.sender}`}>
+            <div 
+              key={index} 
+              className={`message ${message.sender}`}
+              role="article"
+            >
               {message.text}
             </div>
           ))}
         </div>
+
         <form onSubmit={handleSubmit} className="input-form">
           <input
             type="text"
@@ -204,15 +299,15 @@ const Chatbot = () => {
             placeholder="Type your question..."
             disabled={loading}
           />
-          <button type="submit" disabled={loading}>Send</button>
+          <button type="submit" disabled={loading}>
+            Send
+          </button>
         </form>
       </div>
-      <div className="agent-questions">
-        <button onClick={fetchNextQuestion}>Next Question</button>
-      </div>
+
       <div className="transcript-window">
-        <h3>Transcript from Whisper:</h3>
-        {whisperLoading ? <p>Processing transcription...</p> : <p>{transcript || "No transcription available"}</p>}
+        <h3>Current Transcript:</h3>
+        <p>{transcript || "No transcription available"}</p>
       </div>
     </div>
   );
