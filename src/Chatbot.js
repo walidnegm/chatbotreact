@@ -4,11 +4,11 @@ import './Chatbot.css';
 const API_ENDPOINTS = {
   LLM: process.env.REACT_APP_LLM_ENDPOINT || 'http://localhost:8000',
   WHISPER: process.env.REACT_APP_WHISPER_ENDPOINT || 'http://localhost:5000',
-  QUESTIONS: process.env.REACT_APP_QUESTIONS_ENDPOINT || 'http://localhost:8001'
+  QUESTIONS: process.env.REACT_APP_QUESTIONS_ENDPOINT || 'http://localhost:8001',
+  TTS: 'http://localhost:8001'  // Update this to match your gTTS server endpoint
 };
 
 const Chatbot = () => {
-  // Chat and UI states
   const [messages, setMessages] = useState([]);
   const [userInput, setUserInput] = useState('');
   const [loading, setLoading] = useState(false);
@@ -17,8 +17,6 @@ const Chatbot = () => {
   const [isListening, setIsListening] = useState(false);
   const [listeningPrompt, setListeningPrompt] = useState('Click Start to begin conversation');
   const [isSpeaking, setIsSpeaking] = useState(false);
-
-  // Question-related states
   const [currentQuestionIndex, setCurrentQuestionIndex] = useState(0);
   const [currentQuestion, setCurrentQuestion] = useState('');
 
@@ -26,64 +24,91 @@ const Chatbot = () => {
   const videoRef = useRef(null);
   const streamRef = useRef(null);
   const recognitionRef = useRef(null);
-  const utteranceRef = useRef(null);
-  const audioContextRef = useRef(null);
-  const gainNodeRef = useRef(null);
-  const micSourceRef = useRef(null);
+  const shouldRestartListeningRef = useRef(false);
+  const audioRef = useRef(new Audio());
+  const currentAudioUrlRef = useRef(null);
 
-  // Initialize audio context and gain node
-  const initAudioContext = useCallback(async () => {
+  // Function to clean up previous audio URL
+  const cleanupAudioUrl = useCallback(() => {
+    if (currentAudioUrlRef.current) {
+      URL.revokeObjectURL(currentAudioUrlRef.current);
+      currentAudioUrlRef.current = null;
+    }
+  }, []);
+
+  // Function to handle TTS
+  const playAudioResponse = useCallback(async (text) => {
     try {
-      audioContextRef.current = new (window.AudioContext || window.webkitAudioContext)();
-      gainNodeRef.current = audioContextRef.current.createGain();
-      gainNodeRef.current.connect(audioContextRef.current.destination);
-      gainNodeRef.current.gain.value = 0;
-    } catch (error) {
-      console.error('Error initializing audio context:', error);
-      setError('Failed to initialize audio system');
-    }
-  }, []);
-
-  // Function to mute/unmute microphone
-  const setMicrophoneGain = useCallback((value) => {
-    if (gainNodeRef.current) {
-      gainNodeRef.current.gain.value = value;
-    }
-  }, []);
-
-  const utterResponse = useCallback((text) => {
-    if ('speechSynthesis' in window) {
-      console.log('Speaking response:', text);
+      // If we were listening, we'll want to restart after speaking
+      shouldRestartListeningRef.current = isListening;
       
-      setMicrophoneGain(0);
-      
-      utteranceRef.current = new SpeechSynthesisUtterance(text);
+      // Stop listening while speaking
+      if (recognitionRef.current) {
+        recognitionRef.current.stop();
+      }
+
       setIsSpeaking(true);
+
+      // Request speech synthesis from server
+      const response = await fetch(`${API_ENDPOINTS.TTS}/synthesize_speech`, {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({ 
+          text,
+          language: "en"
+        })
+      });
+
+      if (!response.ok) {
+        throw new Error(`HTTP error! status: ${response.status}`);
+      }
+
+      const data = await response.json();
       
-      utteranceRef.current.onend = () => {
-        console.log('Finished speaking');
+      // Clean up previous audio URL
+      cleanupAudioUrl();
+
+      // Convert base64 to blob
+      const audioBlob = await fetch(`data:audio/mp3;base64,${data.audio}`).then(r => r.blob());
+      const audioUrl = URL.createObjectURL(audioBlob);
+      currentAudioUrlRef.current = audioUrl;
+
+      // Set up audio event handlers
+      audioRef.current.src = audioUrl;
+      
+      audioRef.current.onended = () => {
         setIsSpeaking(false);
-        if (isListening) {
-          setMicrophoneGain(1);
+        // Restart listening if we were listening before
+        if (shouldRestartListeningRef.current) {
+          recognitionRef.current?.start();
         }
       };
 
-      utteranceRef.current.onerror = (event) => {
-        console.error('Speech synthesis error:', event);
+      audioRef.current.onerror = (error) => {
+        console.error('Audio playback error:', error);
         setIsSpeaking(false);
-        if (isListening) {
-          setMicrophoneGain(1);
+        setError('Audio playback failed');
+        if (shouldRestartListeningRef.current) {
+          recognitionRef.current?.start();
         }
       };
 
-      window.speechSynthesis.speak(utteranceRef.current);
+      // Play the audio
+      await audioRef.current.play();
+
+    } catch (error) {
+      console.error('Error playing audio response:', error);
+      setError(`Failed to play audio response: ${error.message}`);
+      setIsSpeaking(false);
+      if (shouldRestartListeningRef.current) {
+        recognitionRef.current?.start();
+      }
     }
-  }, [isListening, setMicrophoneGain]);
+  }, [isListening, cleanupAudioUrl]);
 
   const sendTranscriptionToLLM = useCallback(async (text) => {
     setLoading(true);
     try {
-      console.log('Sending to LLM:', text);
       const response = await fetch(`${API_ENDPOINTS.LLM}/process_llm`, {
         method: 'POST',
         headers: { 'Content-Type': 'application/json' },
@@ -99,19 +124,18 @@ const Chatbot = () => {
         { sender: 'bot', text: data.response }
       ]);
 
-      utterResponse(data.response);
+      await playAudioResponse(data.response);
     } catch (error) {
       console.error("Error:", error);
       setError(`Failed to get response: ${error.message}`);
     } finally {
       setLoading(false);
     }
-  }, [utterResponse, setError]);
+  }, [playAudioResponse]);
 
   const fetchNextQuestion = useCallback(async () => {
     try {
       setLoading(true);
-      console.log('Fetching question with index:', currentQuestionIndex);
       
       const response = await fetch(`${API_ENDPOINTS.QUESTIONS}/get_question/${currentQuestionIndex}`);
       
@@ -124,53 +148,43 @@ const Chatbot = () => {
       }
       
       const data = await response.json();
-      console.log('Received question:', data.question);
       
       setCurrentQuestion(data.question);
-      
-      setMessages(prevMessages => [
-        ...prevMessages,
-        { sender: 'system', text: data.question }
-      ]);
-
+      setMessages(prevMessages => [...prevMessages, { sender: 'system', text: data.question }]);
       setCurrentQuestionIndex(prevIndex => prevIndex + 1);
 
-      utterResponse(data.question);
-
+      await playAudioResponse(data.question);
     } catch (error) {
       console.error("Error fetching next question:", error);
       setError(`Failed to fetch next question: ${error.message}`);
     } finally {
       setLoading(false);
     }
-  }, [currentQuestionIndex, utterResponse, setError]);
+  }, [currentQuestionIndex, playAudioResponse]);
 
   const stopListening = useCallback(() => {
-    console.log('Stopping conversation...');
     if (recognitionRef.current) {
       recognitionRef.current.stop();
       setIsListening(false);
       setListeningPrompt('Click Start to begin conversation');
-      setMicrophoneGain(0);
     }
-  }, [setMicrophoneGain]);
+  }, []);
 
   const stopSpeaking = useCallback(() => {
-    if (window.speechSynthesis) {
-      window.speechSynthesis.cancel();
+    if (audioRef.current) {
+      audioRef.current.pause();
+      audioRef.current.currentTime = 0;
       setIsSpeaking(false);
-      if (isListening) {
-        setMicrophoneGain(1);
+      
+      // Restart listening if we were listening before
+      if (shouldRestartListeningRef.current) {
+        recognitionRef.current?.start();
       }
     }
-  }, [isListening, setMicrophoneGain]);
+  }, []);
 
   const startListening = useCallback(async () => {
     try {
-      if (!audioContextRef.current) {
-        await initAudioContext();
-      }
-
       const SpeechRecognition = window.SpeechRecognition || window.webkitSpeechRecognition;
       if (!SpeechRecognition) {
         throw new Error("Browser doesn't support speech recognition");
@@ -184,10 +198,10 @@ const Chatbot = () => {
       recognitionRef.current.onstart = () => {
         setIsListening(true);
         setListeningPrompt('Listening... Click Stop when done');
-        setMicrophoneGain(1);
       };
 
       recognitionRef.current.onend = () => {
+        // Only restart if we're supposed to be listening and not speaking
         if (isListening && !isSpeaking) {
           recognitionRef.current.start();
         }
@@ -215,7 +229,7 @@ const Chatbot = () => {
       console.error('Error starting speech recognition:', error);
       setError('Failed to start speech recognition: ' + error.message);
     }
-  }, [isListening, isSpeaking, initAudioContext, setMicrophoneGain, sendTranscriptionToLLM, setError]);
+  }, [isListening, isSpeaking, sendTranscriptionToLLM]);
 
   useEffect(() => {
     const initializeMedia = async () => {
@@ -226,12 +240,6 @@ const Chatbot = () => {
         });
         
         streamRef.current = stream;
-        await initAudioContext();
-        
-        if (audioContextRef.current) {
-          micSourceRef.current = audioContextRef.current.createMediaStreamSource(stream);
-          micSourceRef.current.connect(gainNodeRef.current);
-        }
 
         if (videoRef.current) {
           videoRef.current.srcObject = stream;
@@ -256,14 +264,13 @@ const Chatbot = () => {
       if (recognitionRef.current) {
         recognitionRef.current.stop();
       }
-      if (window.speechSynthesis) {
-        window.speechSynthesis.cancel();
-      }
-      if (audioContextRef.current) {
-        audioContextRef.current.close();
+      cleanupAudioUrl();
+      if (audioRef.current) {
+        audioRef.current.pause();
+        audioRef.current.src = '';
       }
     };
-  }, [initAudioContext]);
+  }, [cleanupAudioUrl]);
 
   return (
     <div className="chatbot" role="main" aria-label="Chatbot Interface">

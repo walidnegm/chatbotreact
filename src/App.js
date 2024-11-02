@@ -1,18 +1,17 @@
 import React from 'react';
-import { BrowserRouter as Router, Route, Routes } from 'react-router-dom';
-import Chatbot from './Chatbot';
+import { BrowserRouter as Router, Routes, Route } from 'react-router-dom';
 import BotHome from './BotHome';
+import Chatbot from './Chatbot';
+import HomePage from './HomePage'; // Ensure this path is correct
 
 function App() {
   return (
     <Router>
-      <div className="App">
-        <h1>Chatbot Interface</h1>
-        <Routes>
-          <Route path="/" element={<BotHome />} />
-          <Route path="/chatbot" element={<Chatbot />} />
-        </Routes>
-      </div>
+      <Routes>
+        <Route path="/bothome" element={<BotHome />} />
+        <Route path="/chatbot" element={<Chatbot />} />
+        <Route path="/" element={<HomePage />} /> {/* Ensure HomePage is defined */}
+      </Routes>
     </Router>
   );
 }
