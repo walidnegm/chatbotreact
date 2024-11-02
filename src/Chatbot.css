@@ -12,7 +12,7 @@
 /* Updated Media Row */
 .media-row {
   display: flex;
-  gap: 20px; /* Adjusted space between the video and image containers */
+  gap: 20px; /* Space between video and image containers */
   padding: 10px;
   background-color: #f0f0f0; /* Optional background color for contrast */
 }
@@ -38,7 +38,7 @@
 }
 
 .image-display {
-  max-width: 100%; /* Make sure the image fits within the container */
+  max-width: 100%; /* Ensure the image fits within the container */
   height: auto;
   border-radius: 8px;
   border: 1px solid #ccc;
@@ -103,27 +103,6 @@
 }
 
 .input-form button:hover {
-  background-color: #0073e6;
-}
-
-/* Button Container */
-.button-container {
-  display: flex;
-  gap: 10px; /* Space between buttons */
-  padding: 10px;
-  background-color: #f9f9f9;
-}
-
-.button-container button {
-  padding: 10px 15px;
-  background-color: #0084ff;
-  color: white;
-  border: none;
-  border-radius: 10px;
-  cursor: pointer;
-}
-
-.button-container button:hover {
   background-color: #0073e6;
 }
 
