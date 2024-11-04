@@ -286,3 +286,42 @@
   position: absolute;
   bottom: 10px;
 }
+
+/* Resume Upload */
+input[type="file"] {
+  margin-top: 1rem;
+  padding: 0.5rem;
+  border: 1px solid #ccc;
+  border-radius: 4px;
+  cursor: pointer;
+  font-size: 1rem;
+}
+
+/* Skills Window */
+.skills-window {
+  margin: 20px 0;
+  padding: 15px;
+  background-color: #f9f9f9;
+  border: 1px solid #ddd;
+  border-radius: 10px;
+  max-width: 800px;
+}
+
+.skills-window h3 {
+  margin: 0 0 10px 0;
+  font-size: 1.2em;
+  color: #333;
+}
+
+.skills-window ul {
+  list-style: none;
+  padding: 0;
+}
+
+.skills-window li {
+  margin: 5px 0;
+  padding: 8px;
+  background-color: #e9ecef;
+  border-radius: 5px;
+  font-weight: bold;
+}
