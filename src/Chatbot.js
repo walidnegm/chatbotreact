@@ -18,11 +18,20 @@ const Chatbot = () => {
   const [listeningPrompt, setListeningPrompt] = useState('Click Start to begin conversation');
   const [selectedQuestion, setSelectedQuestion] = useState('');
   const [skills, setSkills] = useState([]);
+  const [currentQuestionId, setCurrentQuestionId] = useState(0);
 
   // Refs
   const recognitionRef = useRef(null);
   const audioRef = useRef(new Audio());
   const currentAudioUrlRef = useRef(null);
+
+  const cleanupAudioUrl = useCallback(() => {
+    if (currentAudioUrlRef.current) {
+      URL.revokeObjectURL(currentAudioUrlRef.current);
+      currentAudioUrlRef.current = null;
+    }
+  }, []);
+
   // UseEffect to test backend connectivity
   useEffect(() => {
     const testEndpoint = async () => {
@@ -38,12 +47,12 @@ const Chatbot = () => {
     testEndpoint();
   }, []);
 
-  const cleanupAudioUrl = useCallback(() => {
-    if (currentAudioUrlRef.current) {
-      URL.revokeObjectURL(currentAudioUrlRef.current);
-      currentAudioUrlRef.current = null;
-    }
-  }, []);
+  // Cleanup effect for audio URLs - moved after cleanupAudioUrl definition
+  useEffect(() => {
+    return () => {
+      cleanupAudioUrl();
+    };
+  }, [cleanupAudioUrl]);
 
   const playAudioResponse = useCallback(async (text) => {
     try {
@@ -98,7 +107,11 @@ const Chatbot = () => {
       const response = await fetch(`${API_ENDPOINTS.LLM}/process_llm`, {
         method: 'POST',
         headers: { 'Content-Type': 'application/json' },
-        body: JSON.stringify({ transcription_text: text, question: selectedQuestion })
+        body: JSON.stringify({ 
+          transcription_text: text, 
+          question: selectedQuestion,
+          question_id: currentQuestionId
+        })
       });
 
       if (!response.ok) throw new Error(`HTTP error! status: ${response.status}`);
@@ -106,9 +119,20 @@ const Chatbot = () => {
 
       setMessages(prevMessages => [
         ...prevMessages,
-        { sender: 'user', text: text },
-        { sender: 'bot', text: data.response }
+        { 
+          sender: 'user', 
+          text: text,
+          questionId: currentQuestionId 
+        },
+        { 
+          sender: 'bot', 
+          text: data.response,
+          questionId: currentQuestionId 
+        }
       ]);
+
+      // Play the bot's response
+      await playAudioResponse(data.response);
 
     } catch (error) {
       console.error("Error:", error);
@@ -116,37 +140,61 @@ const Chatbot = () => {
     } finally {
       setLoading(false);
     }
-  }, [loading, isSpeaking, selectedQuestion]);
+  }, [loading, isSpeaking, selectedQuestion, currentQuestionId, playAudioResponse]);
 
   const fetchNextQuestion = useCallback(async () => {
     if (loading || isSpeaking) return;
 
     try {
       setLoading(true);
+      
+      // First, reset the context for the new question
+      await fetch(`${API_ENDPOINTS.LLM}/new_question`, {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({ question_id: currentQuestionId + 1 })
+      });
 
-      const response = await fetch(`${API_ENDPOINTS.QUESTIONS}/get_question/${currentQuestionIndex}`);
-
-      if (!response.ok) {
-        if (response.status === 404) {
+      // Then fetch the next question
+      const questionResponse = await fetch(`${API_ENDPOINTS.QUESTIONS}/get_question/${currentQuestionIndex}`);
+      
+      if (!questionResponse.ok) {
+        if (questionResponse.status === 404) {
           setError('No more questions available.');
           return;
         }
-        throw new Error(`Error fetching question: ${response.statusText}`);
+        throw new Error(`Error fetching question: ${questionResponse.statusText}`);
       }
 
-      const data = await response.json();
-      setSelectedQuestion(data.question);
-      setMessages(prevMessages => [...prevMessages, { sender: 'system', text: data.question }]);
+      const questionData = await questionResponse.json();
+
+      // Update state with new question
+      setCurrentQuestionId(prevId => prevId + 1);
+      setSelectedQuestion(questionData.question);
+      setMessages(prevMessages => [
+        ...prevMessages, 
+        { 
+          sender: 'system', 
+          text: questionData.question,
+          questionId: currentQuestionId + 1 
+        }
+      ]);
+
+      // Play the new question
+      await playAudioResponse(questionData.question);
       setCurrentQuestionIndex(prevIndex => prevIndex + 1);
 
-      await playAudioResponse(data.question);
     } catch (error) {
       console.error("Error fetching next question:", error);
       setError(`Failed to fetch next question: ${error.message}`);
     } finally {
       setLoading(false);
     }
-  }, [currentQuestionIndex, playAudioResponse, loading, isSpeaking]);
+  }, [currentQuestionIndex, playAudioResponse, loading, isSpeaking, currentQuestionId]);
+
+  const getCurrentQuestionMessages = useCallback(() => {
+    return messages.filter(msg => msg.questionId === currentQuestionId);
+  }, [messages, currentQuestionId]);
 
   const stopListening = useCallback(() => {
     console.log('Stopping listening...');
@@ -203,56 +251,69 @@ const Chatbot = () => {
     }
   }, [sendTranscriptionToLLM]);
 
+  const uploadResume = useCallback(async (file) => {
+    setLoading(true);
+    setError(null);
+    try {
+      const formData = new FormData();
+      formData.append("file", file);
 
-// Function to handle resume upload
-const uploadResume = useCallback(async (file) => {
-  setLoading(true);
-  console.log("uploadResume called with file:", file); // Debugging log to verify function call
-  setError(null);
-  try {
-    const formData = new FormData();
-    formData.append("file", file);
+      console.log("Sending resume upload request...");
+      const response = await fetch(`${API_ENDPOINTS.RESUME}/upload_resume`, {
+        method: 'POST',
+        body: formData
+      });
 
-    console.log("FormData created:", formData); // Debugging log to verify formData
+      if (!response.ok) throw new Error(`HTTP error! status: ${response.status}`);
+      
+      const data = await response.json();
+      console.log("Raw API Response:", data);
 
-    const response = await fetch(`${API_ENDPOINTS.RESUME}/upload_resume`, {
-      method: 'POST',
-      body: formData
-    });
+      let skillsList = [];
+      if (data.skills_list) {
+        skillsList = data.skills_list;
+      } else if (data.skills) {
+        skillsList = data.skills;
+      } else if (Array.isArray(data)) {
+        skillsList = data;
+      } else if (typeof data === 'object') {
+        skillsList = Object.values(data);
+      }
 
-    if (!response.ok) throw new Error(`HTTP error! status: ${response.status}`);
-    const data = await response.json();
+      skillsList = skillsList
+        .filter(skill => skill && typeof skill === 'string')
+        .map(skill => skill.trim());
 
-    console.log("Extracted Skills from response:", data.skills_list); // Debugging log to check response data
+      console.log("Processed skills list:", skillsList);
 
-    if (Array.isArray(data.skills_list)) {
-      setSkills(data.skills_list);
-    } else {
-      console.error("Skills list is not an array"); // Error log if response is not in expected format
+      if (skillsList.length > 0) {
+        setSkills(skillsList);
+      } else {
+        throw new Error("No valid skills found in the response");
+      }
+
+    } catch (error) {
+      console.error("Detailed upload error:", error);
+      console.error("Response data:", error.response);
+      setError(`Resume upload failed: ${error.message}. Please check the console for details.`);
+    } finally {
+      setLoading(false);
     }
-  } catch (error) {
-    console.error("Error uploading resume:", error); // Error log for fetch issues
-    setError(`Failed to upload resume: ${error.message}`);
-  } finally {
-    setLoading(false);
-  }
-}, []);
+  }, []);
 
-const handleSubmitResume = (e) => {
-  e.preventDefault();
-  console.log("handleSubmitResume called"); // Debugging log
-  const fileInput = document.getElementById('resumeInput');
-  
-  // Check if file input is available and file is selected
-  if (fileInput && fileInput.files.length > 0) {
-    console.log("File selected:", fileInput.files[0]); // Debugging log to check the selected file
-    uploadResume(fileInput.files[0]);
-  } else {
-    console.error("No file selected for upload"); // Error log if no file is selected
-    setError("Please select a file to upload."); // Set error message if no file is selected
-  }
-};
-
+  const handleSubmitResume = (e) => {
+    e.preventDefault();
+    console.log("handleSubmitResume called");
+    const fileInput = document.getElementById('resumeInput');
+    
+    if (fileInput && fileInput.files.length > 0) {
+      console.log("File selected:", fileInput.files[0]);
+      uploadResume(fileInput.files[0]);
+    } else {
+      console.error("No file selected for upload");
+      setError("Please select a file to upload.");
+    }
+  };
 
   return (
     <div className="chatbot" role="main" aria-label="Chatbot Interface">
@@ -310,7 +371,7 @@ const handleSubmitResume = (e) => {
 
       <div className="chat-window">
         <div className="messages">
-          {messages.map((message, index) => (
+          {getCurrentQuestionMessages().map((message, index) => (
             <div
               key={index}
               className={`message ${message.sender}`}
