@@ -1,0 +1,29 @@
+{
+    "main_concept": "embedded software development",
+    "sub_concepts": [
+        {
+            "name": "Hardware and Low-Level Programming",
+            "description": "Understanding hardware interfaces, low-level programming languages, and interacting directly with hardware registers and peripherals.",
+            "importance": null,
+            "connection_to_next": null
+        },
+        {
+            "name": "Real-Time and Resource Constraints",
+            "description": "Developing software that meets strict timing constraints, optimizing for limited resources like memory, processing power, and energy consumption.",
+            "importance": null,
+            "connection_to_next": null
+        },
+        {
+            "name": "Development Processes and Tools",
+            "description": "Cross-platform development, testing and debugging techniques, software lifecycle management practices specific to embedded systems.",
+            "importance": null,
+            "connection_to_next": null
+        },
+        {
+            "name": "Specialized Domains and Requirements",
+            "description": "Implementing safety and security measures, acquiring domain-specific knowledge in areas like automotive, industrial automation, or consumer electronics.",
+            "importance": null,
+            "connection_to_next": null
+        }
+    ]
+}
