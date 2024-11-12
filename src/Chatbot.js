@@ -117,6 +117,13 @@ const Chatbot = () => {
       if (!response.ok) throw new Error(`HTTP error! status: ${response.status}`);
       const data = await response.json();
 
+      // Check if the response indicates moving to next question
+      if (data.response === "next_question") {
+        setLoading(false);  // Reset loading before calling fetchNextQuestion
+        setTimeout(() => fetchNextQuestion(), 0);  // Use setTimeout to break the cycle
+        return;
+      }
+
       setMessages(prevMessages => [
         ...prevMessages,
         { 
@@ -140,7 +147,7 @@ const Chatbot = () => {
     } finally {
       setLoading(false);
     }
-  }, [loading, isSpeaking, selectedQuestion, currentQuestionId, playAudioResponse]);
+  }, [loading, isSpeaking, selectedQuestion, currentQuestionId, playAudioResponse]); // Removed fetchNextQuestion from dependencies
 
   const fetchNextQuestion = useCallback(async () => {
     if (loading || isSpeaking) return;
